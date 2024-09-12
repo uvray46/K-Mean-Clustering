@@ -1,0 +1,343 @@
+# Importing necessary libraries
+%matplotlib inline
+import pandas as pd
+import sklearn
+import matplotlib.pyplot as plt
+import seaborn as sns
+from sklearn.cluster import KMeans
+import numpy as np
+from sklearn.metrics import silhouette_score, silhouette_samples
+import matplotlib.cm as cm
+from sklearn.decomposition import PCA
+from sklearn.cluster import AffinityPropagation, SpectralClustering, AgglomerativeClustering, DBSCAN
+from matplotlib.colors import ListedColormap
+
+# Setup Seaborn for visual styling
+sns.set_style("whitegrid")
+sns.set_context("poster")
+
+# Load data from the Excel file
+df_offers = pd.read_excel(r"C:\Users\jwhit\OneDrive\Documents\Data Science Course\PCA Clustering K Means\WineKMC.xlsx", sheet_name=0)
+
+# Rename columns for better readability
+df_offers.columns = ["offer_id", "campaign", "varietal", "min_qty", "discount", "origin", "past_peak"]
+
+# Display the first few rows of the offers dataframe
+df_offers.head()
+
+# Load transactions data from the second sheet
+df_transactions = pd.read_excel(r"C:\Users\jwhit\OneDrive\Documents\Data Science Course\PCA Clustering K Means\WineKMC.xlsx", sheet_name=1)
+
+# Rename columns for clarity
+df_transactions.columns = ["customer_name", "offer_id"]
+
+# Add a new column to represent the number of offers claimed
+df_transactions['n'] = 1
+
+# Display the first few rows of the transactions dataframe
+df_transactions.head()
+
+# Merge the df_offers and df_transactions dataframes on 'offer_id'
+df_merged = pd.merge(df_transactions, df_offers, on='offer_id')
+
+# Create a pivot table where rows are customer names, columns are offer ids, and values are 1 or NaN
+df_pivot = pd.pivot_table(df_merged, values='n', index='customer_name', columns='offer_id', fill_value=0)
+
+# Display the first few rows of the pivoted dataframe
+df_pivot.head()
+
+# Check for any remaining NaN values (just for verification, though fill_value=0 should handle it)
+print(f"Number of NaN values in the pivoted dataframe: {df_pivot.isnull().sum().sum()}")  # This should return 0 if no NaN values remain
+
+# Create a numpy matrix with only the columns representing the offers (i.e., the 0/1 columns)
+x_cols = df_pivot.values
+
+# List to hold the sum of squared distances (SS) for each value of K
+ss = []
+
+# Test values of K between 2 and 10
+k_values = range(2, 11)
+
+# Apply K-Means for each K and store the SS
+for k in k_values:
+    kmeans = KMeans(n_clusters=k, random_state=0)
+    kmeans.fit(x_cols)
+    ss.append(kmeans.inertia_)
+
+# Plot the Elbow curve
+plt.figure(figsize=(10, 6))
+plt.plot(k_values, ss, marker='o', linestyle='--')
+plt.title('Elbow Method for Optimal K')
+plt.xlabel('Number of clusters (K)')
+plt.ylabel('Sum of Squared Distances (Inertia)')
+plt.xticks(k_values)
+plt.grid(True)
+plt.show()
+
+# Based on the Elbow plot 
+# Let's assume K=4 for this example.
+best_k = 4
+kmeans_best = KMeans(n_clusters=best_k, random_state=0)
+df_pivot['cluster'] = kmeans_best.fit_predict(x_cols)
+
+# Bar chart showing the number of points in each cluster
+plt.figure(figsize=(10, 6))
+df_pivot['cluster'].value_counts().sort_index().plot(kind='bar')
+plt.title(f'Number of Points in Each Cluster for K={best_k}')
+plt.xlabel('Cluster')
+plt.ylabel('Number of Points')
+plt.grid(True)
+plt.show()
+
+# Lower SS values indicate better clustering, but we aim to find where the SS stops decreasing significantly, which is the "elbow point."
+# The biggest challenge with the Elbow method is the subjectivity in identifying the elbow point. The decrease in SS is not always sharp, and the plot can sometimes be ambiguous.
+
+# List to hold the silhouette scores for each K
+silhouette_scores = []
+# Test values of K between 2 and 10
+for k in k_values:
+    kmeans = KMeans(n_clusters=k, random_state=0)
+    cluster_labels = kmeans.fit_predict(x_cols)
+
+    # Compute the average silhouette score for the current K
+    silhouette_avg = silhouette_score(x_cols, cluster_labels)
+    silhouette_scores.append(silhouette_avg)
+
+    # Generate silhouette plot for the current K
+    fig, ax1 = plt.subplots(1, 1)
+    fig.set_size_inches(10, 6)
+
+    # Plot formatting
+    ax1.set_xlim([-0.1, 1])
+    ax1.set_ylim([0, len(x_cols) + (k + 1) * 10])
+
+    # Compute silhouette scores for each sample
+    sample_silhouette_values = silhouette_samples(x_cols, cluster_labels)
+    
+    y_lower = 10
+    for i in range(k):
+        # Aggregate silhouette scores for the current cluster
+        ith_cluster_silhouette_values = sample_silhouette_values[cluster_labels == i]
+        ith_cluster_silhouette_values.sort()
+
+        size_cluster_i = len(ith_cluster_silhouette_values)
+        y_upper = y_lower + size_cluster_i
+
+        color = cm.nipy_spectral(float(i) / k)
+        ax1.fill_betweenx(np.arange(y_lower, y_upper),
+                          0, ith_cluster_silhouette_values,
+                          facecolor=color, edgecolor=color, alpha=0.7)
+
+        y_lower = y_upper + 10
+
+    ax1.set_title(f"Silhouette plot for the clusters for K={k}")
+    ax1.set_xlabel("Silhouette coefficient values")
+    ax1.set_ylabel("Cluster label")
+    
+    # Vertical line for average silhouette score of all values
+    ax1.axvline(x=silhouette_avg, color="red", linestyle="--")
+
+    plt.show()
+
+# Plot the average silhouette scores for each K
+plt.figure(figsize=(10, 6))
+plt.plot(k_values, silhouette_scores, marker='o', linestyle='--')
+plt.title('Silhouette Scores for Different K')
+plt.xlabel('Number of clusters (K)')
+plt.ylabel('Average Silhouette Score')
+plt.xticks(k_values)
+plt.grid(True)
+plt.show()
+
+# Print the best K based on the highest silhouette score
+best_silhouette_k = k_values[np.argmax(silhouette_scores)]
+print(f"The best K based on the Silhouette method is: {best_silhouette_k}")
+
+# Comparing the optimal K obtained from the silhouette scores with the K chosen using the Elbow method. They could be the same or differ based on how well the clusters are separated.
+
+# Apply PCA to reduce the dimensionality to 2 components
+pca = PCA(n_components=2)
+pca_components = pca.fit_transform(x_cols)
+# Create a DataFrame with customer name, cluster id, and PCA components
+df_pca = pd.DataFrame({
+    'customer_name': df_pivot.index,
+    'cluster': df_pivot['cluster'],
+    'x': pca_components[:, 0],
+    'y': pca_components[:, 1]
+})
+
+# Plot a scatterplot of the two PCA components
+plt.figure(figsize=(10, 6))
+sns.scatterplot(data=df_pca, x='x', y='y', hue='cluster', palette='Set1', s=100)
+
+# Add labels and title to the plot
+plt.title('PCA Scatter Plot of Clusters')
+plt.xlabel('PCA Component 1 (x)')
+plt.ylabel('PCA Component 2 (y)')
+plt.grid(True)
+plt.show()
+
+# The clusters from Spectral Clustering and Agglomerative Clustering with K=4 show clear, well-separated groupings, while Affinity Propagation resulted in more compact, less distinct clusters. 
+DBSCAN struggled, forming one large cluster and classifying many points as noise.
+# Both the Elbow and Silhouette methods suggest that K=4 is the optimal number of clusters, with Spectral Clustering and Agglomerative Clustering visually confirming well-defined clusters.
+# The clusters likely correspond to distinct customer preferences based on attributes like wine varietals, discount rates, minimum quantity, and wine origin, which can inform targeted marketing strategies for different customer groups.
+
+# Initialize a new PCA model
+pca_full = PCA()
+# Fit the PCA model to the original offer/transaction data (x_cols)
+pca_full.fit(x_cols)
+
+# Calculate the explained variance ratio for each component
+explained_variance = pca_full.explained_variance_ratio_
+# Plot the explained variance
+plt.figure(figsize=(10, 6))
+plt.plot(range(1, len(explained_variance) + 1), explained_variance, marker='o', linestyle='--')
+
+# Add labels and title
+plt.title('Explained Variance by Principal Component')
+plt.xlabel('Principal Component')
+plt.ylabel('Explained Variance Ratio')
+plt.grid(True)
+plt.show()
+
+# Cumulative explained variance
+cumulative_explained_variance = np.cumsum(explained_variance)
+# Plot the cumulative explained variance to find the elbow point
+plt.figure(figsize=(10, 6))
+plt.plot(range(1, len(cumulative_explained_variance) + 1), cumulative_explained_variance, marker='o', linestyle='--')
+
+# Add labels and title
+plt.title('Cumulative Explained Variance by Principal Component')
+plt.xlabel('Number of Principal Components')
+plt.ylabel('Cumulative Explained Variance')
+plt.grid(True)
+plt.show()
+
+# By plotting the explained variance from the PCA, the elbow point occurs after about 3 components, where the rate of variance explained starts to level off. So 3 is the optimal number.
+
+# 4a.) Conclusions: the optimal number of clusters is K=4, as determined by both the Elbow and Silhouette methods, with Spectral Clustering and Agglomerative Clustering providing the most distinct and interpretable clusters. 
+These clusters likely correspond to different customer preferences based on wine varietals, discount rates, minimum quantity, and wine origin. 
+Additionally, the PCA analysis indicates that 3 dimensions are sufficient to capture most of the variance in the dataset, simplifying the data without losing significant information.
+
+# List to hold silhouette scores for each K
+silhouette_scores = []
+
+# Test values of K between 2 and 10
+k_values = range(2, 11)
+for k in k_values:
+    kmeans = KMeans(n_clusters=k, random_state=0)
+    cluster_labels = kmeans.fit_predict(x_cols)
+    silhouette_avg = silhouette_score(x_cols, cluster_labels)
+    silhouette_scores.append(silhouette_avg)
+
+# Initialize clustering algorithms
+affinity_propagation = AffinityPropagation()
+spectral_clustering = SpectralClustering(n_clusters=4, affinity='nearest_neighbors')
+agglomerative_clustering = AgglomerativeClustering(n_clusters=4)
+dbscan_clustering = DBSCAN(eps=1.5, min_samples=3)  # Adjusted eps and min_samples for DBSCAN
+
+# Fit and predict clusters using each method
+affinity_clusters = affinity_propagation.fit_predict(x_cols)
+spectral_clusters = spectral_clustering.fit_predict(x_cols)
+agglomerative_clusters = agglomerative_clustering.fit_predict(x_cols)
+dbscan_clusters = dbscan_clustering.fit_predict(x_cols)
+
+# Create a DataFrame to store clustering results
+df_clusters = pd.DataFrame({
+    'customer_name': df_pivot.index,
+    'affinity_cluster': affinity_clusters,
+    'spectral_cluster': spectral_clusters,
+    'agglomerative_cluster': agglomerative_clusters,
+    'dbscan_cluster': dbscan_clusters
+})
+
+# Function to calculate silhouette score and print it for each algorithm
+def print_silhouette_scores():
+    for method, labels in zip(
+        ['Affinity Propagation', 'Spectral Clustering', 'Agglomerative Clustering', 'DBSCAN'],
+        [affinity_clusters, spectral_clusters, agglomerative_clusters, dbscan_clusters]
+    ):
+        # Check if clustering labels are valid (some algorithms may assign -1 for noise, e.g., DBSCAN)
+        if len(set(labels)) > 1:  # Need at least 2 clusters
+            score = silhouette_score(x_cols, labels)
+            print(f"Silhouette Score for {method}: {score:.4f}")
+        else:
+            print(f"Silhouette Score for {method}: Not Applicable (only one cluster detected)")
+
+# Print silhouette scores for comparison
+print_silhouette_scores()
+
+def plot_clusters_debug(cluster_labels, title):
+    print(f"Plotting: {title}")
+    print(f"Length of df_pca: {len(df_pca)}, Length of cluster_labels: {len(cluster_labels)}")
+    print(f"Cluster label distribution: {pd.Series(cluster_labels).value_counts()}")
+
+    plt.figure(figsize=(10, 6))
+
+    if len(df_pca) == len(cluster_labels):
+        print("Lengths match. Proceeding to plot.")
+        
+        num_clusters = len(set(cluster_labels)) - (1 if -1 in cluster_labels else 0)
+        print(f"Number of clusters (excluding noise): {num_clusters}")
+
+        # Check if there are non-noise points to plot
+        non_noise = np.array(cluster_labels != -1)
+        print(f"Non-noise points: {sum(non_noise)}")
+
+        # Plot non-noise clusters
+        sns.scatterplot(
+            x=df_pca.loc[non_noise, 'x'],
+            y=df_pca.loc[non_noise, 'y'],
+            hue=np.array(cluster_labels[non_noise]),  # Use valid clusters for hue
+            palette=sns.color_palette("Set1", num_clusters),
+            s=100,
+            legend="full"
+        )
+
+        # Plot noise points in black with a different marker
+        if -1 in cluster_labels:
+            noise_points = df_pca[cluster_labels == -1]
+            plt.scatter(noise_points['x'], noise_points['y'], c='black', label='Noise', s=100, marker='x')
+
+        plt.title(title)
+        plt.grid(True)
+
+        # Move the legend outside the plot
+        plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+
+        plt.show()
+
+    else:
+        print(f"Mismatch between PCA data and cluster labels for {title}.")
+
+# Re-run for each method with adjusted legend position
+plot_clusters_debug(df_clusters['affinity_cluster'], 'Affinity Propagation Clustering')
+plot_clusters_debug(df_clusters['spectral_cluster'], 'Spectral Clustering')
+plot_clusters_debug(df_clusters['agglomerative_cluster'], 'Agglomerative Clustering')
+plot_clusters_debug(df_clusters['dbscan_cluster'], 'DBSCAN Clustering')
+
+# Spectral Clustering and Agglomerative Clustering performed the best because they provided distinct, interpretable clusters with clear separations. These algorithms likely performed better because the dataset doesn’t have the dense, 
+noise-prone structure that DBSCAN excels with, and the structured patterns in customer behavior align well with the partitioning approaches used by Spectral and Agglomerative Clustering.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
